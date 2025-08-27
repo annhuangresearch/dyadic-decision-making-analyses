@@ -1,0 +1,880 @@
+---
+title: "exploratory data analysis"
+output:
+  html_document:
+    theme: lumen
+    #code_folding: hide
+    df_print: paged
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+    toc_depth: 3
+---
+
+```{r}
+rm(list=ls())
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(ggplot2)
+library(gsubfn)
+library(cowplot)
+library(ggpubr)
+options(warn=-1)
+options(dplyr.summarise.inform = FALSE)
+
+apatheme=theme_bw()+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.border=element_blank(),
+        axis.line=element_line(color="black"),
+        text=element_text(size=10),
+        legend.title=element_blank())
+
+apatheme_2=theme_bw()+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.border=element_blank(),
+        axis.line=element_line(color="black"),
+        axis.text.x = element_text(angle = 70, hjust = 1),
+        text=element_text(size=10),
+        legend.title=element_blank())
+```
+
+# load preprocessed data
+
+```{r}
+list_all_files <-list.files("./raw_data/main_experiment/",full.names = TRUE)
+d<-do.call("rbind",lapply(list_all_files,read.csv, header=TRUE))
+
+sum(is.na(d))
+dim(d) # 33000    35
+```
+
+# removal of trials that did not meet the RT criteria
+
+```{r}
+before_removal <- nrow(d)
+d<-d[d$rt > .1 & d$rt < 1.5,] # measured in seconds
+nrow(d) # 31205 obs
+number_removed <- (before_removal - nrow(d))
+number_removed # 1795
+
+# percentage of removed trials
+(before_removal - nrow(d))/before_removal *100 # 5.43 %
+
+dim(d)
+```
+
+# active trials count (per individual)
+
+```{r}
+# count the number of active trials per participant
+same_agent_responses_count <- d %>%
+  group_by(individual_id) %>%
+  count()
+
+# change to character
+same_agent_responses_count$individual_id <- as.character(same_agent_responses_count$individual_id)
+
+# bar plot for the active trials count
+bar_plot <- ggplot(same_agent_responses_count, aes(x = individual_id, y = n)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Number of active trials per participant",
+       x = "Participant ID",
+       y = "Response Count") +
+  apatheme_2
+
+print(bar_plot)
+
+mean_response_count <- mean(same_agent_responses_count$n)
+sd_response_count <- sd(same_agent_responses_count$n)
+range_response_count <- range(same_agent_responses_count$n)
+
+# participants with < 500 active trails
+participants_fewer_than_500 <- same_agent_responses_count %>%
+  filter(n < 500)
+print(participants_fewer_than_500)
+
+# count trials of left/right responses per participant
+
+# filter data for left responses
+left_responses <- d %>% filter(response_n == "0")
+left_responses_stats <- left_responses %>%
+  group_by(individual_id) %>%
+  summarise(count_leftward = sum(length(trial)))
+
+# filter data for right responses
+right_responses <- d %>% filter(response_n == "1")
+right_responses_stats <- right_responses %>%
+  group_by(individual_id) %>%
+  summarise(count_rightward = sum(length(trial)))
+
+mean_left <- mean(left_responses_stats$count_leftward)
+range_left <- range(left_responses_stats$count_leftward)
+sd_left <- sd(left_responses_stats$count_leftward)
+
+mean_right <- mean(right_responses_stats$count_rightward)
+range_right <- range(right_responses_stats$count_rightward)
+sd_right <- sd(right_responses_stats$count_rightward)
+
+print(mean_left) # 232
+print(range_left) # 107 324
+print(sd_left) # 39
+
+# count the number of trials preceded by own/partner
+
+# filter for trials preceded by own
+preceeded_by_own_trial <- d %>%
+  filter(individual_id == lag(individual_id))
+
+# group by individual id
+preceeded_by_own_trial_stats <- preceeded_by_own_trial %>%
+  group_by(individual_id) %>%
+  summarise(count_preceeded_by_own = n())
+
+preceeded_by_own_trial_stats
+
+# filter for trials preceded by partner
+preceeded_by_partner_trial <- d %>%
+  filter(individual_id != lag(individual_id))
+
+# group by individual id
+preceeded_by_partner_trial_stats <- preceeded_by_partner_trial %>%
+  group_by(individual_id) %>%
+  summarise(count_preceeded_by_partner = n())
+
+preceeded_by_partner_trial_stats
+
+mean_trials_preceded_own <- mean(preceeded_by_own_trial_stats$count_preceeded_by_own)
+range_trials_preceded_own <- range(preceeded_by_own_trial_stats$count_preceeded_by_own)
+sd_trials_preceded_own <- sd(preceeded_by_own_trial_stats$count_preceeded_by_own)
+
+print(mean_trials_preceded_own) # 236
+print(range_trials_preceded_own) # 144 284
+print(sd_trials_preceded_own) # 23
+
+mean_trials_preceded_partner <- mean(preceeded_by_partner_trial_stats$count_preceeded_by_partner)
+range_trials_preceded_partner <- range(preceeded_by_partner_trial_stats$count_preceeded_by_partner)
+sd_trials_preceded_partner <- sd(preceeded_by_partner_trial_stats$count_preceeded_by_partner)
+
+print(mean_trials_preceded_partner) # 236
+print(range_trials_preceded_partner) # 194 261
+print(sd_trials_preceded_partner) # 15
+
+# distribution of consecutive active trials
+
+# this part colleague helped with the code
+# to show that the design is fully randomized, we can show a distribution of
+# consecutive "active" trials per or across participants. this would make clear
+# that not one person answered like 5 times in a row or something thus leading
+# to some kind of confound in the data.
+
+# this part TS helped me, so I directly import the same data that was revised
+# and checked by her
+
+library(readr)
+Data <- read_csv("data_checked_by_colleage.csv")
+
+d_check <- Data
+
+# code in python:
+# data["CumSum"] = data["comparison_In"].groupby(data["comparison_In"].eq(False).cumsum()).cumsum().tolist()
+
+# create a lag of the IDs
+d_check$lagged_id <- lag(d_check$individual_id)
+
+# compare the IDs with the lagged IDs
+d_check$comparison <- d_check$individual_id == d_check$lagged_id
+
+## you can convert TRUEs to 1s and 0s for FALSE
+
+# count the cumulative sum (see python code)
+d_check$CumSum <- with(d_check, ave(comparison_In, cumsum(!comparison_In), FUN = cumsum))
+
+# Print the count of data points for each unique value of CumSum
+d_check %>%
+  group_by(CumSum) %>%
+  summarise(count = n()) %>%
+  print()
+
+# visualize
+count_plot <- d_check %>%
+  ggplot(aes(x = CumSum)) +
+  geom_bar() +
+  labs(#title = "Distribution of Consecutive Active Trials",
+       x = "Number of Consecutive Trials",
+       y = "Count") + theme_pubr(base_size = 14)
+
+print(count_plot)
+```
+
+# Active trials count per pair/dayd
+
+```{r}
+# Count the number of left/right responses per pair
+
+# For left responses per pair
+left_responses_per_pair <- d %>%
+  filter(response_n == "0") %>%
+  group_by(pair) %>%
+  summarise(count_leftward_per_pair = sum(length(trial)))
+
+# For right responses per pair
+right_responses_per_pair <- d %>%
+  filter(response_n == "1") %>%
+  group_by(pair) %>%
+  summarise(count_rightward_per_pair = sum(length(trial)))
+
+# Merge left and right counts for each pair
+left_right_responses_per_pair <- left_responses_per_pair %>%
+  full_join(right_responses_per_pair, by = "pair")
+
+# Summary statistics for left/right responses per pair
+mean_left_per_pair <- mean(left_right_responses_per_pair$count_leftward_per_pair, na.rm = TRUE) # 494
+range_left_per_pair <- range(left_right_responses_per_pair$count_leftward_per_pair, na.rm = TRUE) # 413 566
+sd_left_per_pair <- sd(left_right_responses_per_pair$count_leftward_per_pair, na.rm = TRUE) # 45.36518
+
+mean_right_per_pair <- mean(left_right_responses_per_pair$count_rightward_per_pair, na.rm = TRUE) # 506
+range_right_per_pair <- range(left_right_responses_per_pair$count_rightward_per_pair, na.rm = TRUE) # 434 587
+sd_right_per_pair <- sd(left_right_responses_per_pair$count_rightward_per_pair, na.rm = TRUE) # 45.36518
+
+# Print results
+print(mean_left_per_pair)
+print(range_left_per_pair)
+print(sd_left_per_pair)
+
+print(mean_right_per_pair)
+print(range_right_per_pair)
+print(sd_right_per_pair)
+```
+
+# Bias values for two members within the same pair
+
+Potentially left biased participants could be paired with right biased participants. This would look like a preference for alternating responses. **This can be checked by calculating the correlation of left/right bias of participants in the same dyad and visualized by a scatter plot.** On one axis you plot the left/right bias of one participant of a dyad and on the other the left/right bias of the other. The resulting cloud could be round (uncorrelated), or elongated (correlated). In case it is correlated or anticorrelated that data might be understood by means of opposing biases within dyads. That's different from our present message
+
+Essentially, we want to check if, in a dyad, one participant's tendency to respond left/right is associated with the other participant's tendency to respond in the opposite or same direction. This would give insights into whether there’s a tendency toward alternating responses between participants (potentially reflecting opposing biases).
+
+```{r}
+# Step 1: Calculate proportion of right responses for each participant
+# this is literally just counting how many times a person responded right
+proportion_right_responses <- d %>%
+  group_by(individual_id) %>%
+  summarise(
+    pair = first(pair),
+    proportion_right_responses = sum(response_n_effect_code == 1) / length(trial)
+  )
+View(proportion_right_responses)
+
+# Step 2: calculate the proportion of rightward moving stimulus
+# this is the number of times the stimulus was rightward
+# looks fine to me, so left/right is nearly equal amount
+# which is how it's supposed to be due to how we designed the experiment
+
+proportion_stimulus_right <- d %>%
+  group_by(individual_id) %>%
+  summarise(
+    pair = first(pair),
+    proportion_stimulus_right = sum(stimulus_n == 1) / length(trial)
+  )
+
+View(proportion_stimulus_right)
+
+# Step 3: Left join to align both datasets and calculate "left/right bias"
+# bias means a tendency to favor one response over the other i.e., the difference
+# between the number of rightward-moving stimulus and the right decisions given
+# we do this per each participant
+
+# if the value is positive, that means higher tendency to respond right
+# if it's negative that means higher tendency to respond left
+# i should not expect a big magnitude though
+
+bias_data <- proportion_right_responses %>%
+  left_join(proportion_stimulus_right, by = c("individual_id", "pair")) %>%
+  mutate(bias = proportion_right_responses - proportion_stimulus_right)
+
+View(bias_data)
+
+# Step 4: Correlate this "right/left bias" between the two participants of the
+# dyads
+
+bias_data_combined <- bias_data %>%
+  group_by(pair) %>%
+  summarise(
+    bias_1 = first(bias),
+    bias_2 = last(bias)
+  )
+View(bias_data_combined)
+
+mean(bias_data$bias)
+range(bias_data$bias)
+sd(bias_data$bias)
+
+correlation <- cor.test(bias_data_combined$bias_1, bias_data_combined$bias_2)
+print(correlation)
+
+# no meaningful relationship between the biases of participants within dyads
+# conclusion is the following: 
+# While there is a slight tendency for opposing biases (indicated by the
+# negative correlation), it is not strong enough to draw any reliable conclusion
+
+# Step 5: Visualize by scatterplot
+scatterplot <- ggplot(bias_data_combined, aes(x = bias_1, y = bias_2)) +
+  geom_point(size = 2) +
+  #geom_smooth(method = "lm", se = FALSE) + 
+  labs(
+    x = "Bias of Participant 1",
+    y = "Bias of Participant 2"
+  ) +
+  theme_pubr(base_size = 14)
+
+print(scatterplot)
+ggsave("Fig_3_scatterplot_bias_dyads.pdf", plot = scatterplot, width = 30, height = 25, units = "cm")
+```
+
+# Change of RT over block
+
+- does the reaction time (RT) change over the duration of experiment (blocks)? Maybe people started zooning out during the experiment and took a very long time.
+
+```{r message=FALSE, warning=FALSE}
+# calculate mean and sd of RT
+mean_rt <- mean(d$rt) # measured in seconds; 0.877 sec
+sd_rt <- sd(d$rt) # 0.25 sec
+
+by_block <-group_by(d, block, pair, chamber)
+by_block <- summarise(by_block, block_mean = mean(rt))
+
+# plot_x <- ggplot(data = by_block, aes(x=as.factor(block), y=block_mean))+
+#   geom_point(aes(colour = chamber))+
+#   facet_wrap(~pair)+
+#   labs(title = "Mean RT across blocks",
+#        x = "block number",
+#        y = "mean reaction time (s)") + 
+#   ylim(0.4,1.6) + apatheme
+# 
+# plot_x
+
+# # show a simpler figure
+# # show the average reaction time (RT) across the 10 blocks without grouping by
+# # dyad and chamber
+# 
+# by_block <- group_by(d, block)
+# by_block <- summarise(by_block, block_mean = mean(rt), block_sd = sd(rt))
+# 
+# plot_x <- ggplot(data = by_block, aes(x = as.factor(block), y = block_mean)) +
+#   geom_point() +
+#   geom_errorbar(aes(ymin = block_mean - block_sd, ymax = block_mean + block_sd), width = 0.2) +
+#   labs(title = "Mean RT across blocks",
+#        x = "Block number",
+#        y = "Mean RT (s)") +
+#   ylim(0.4, 1.6) +
+#   apatheme
+# 
+# plot_x
+
+#by_block <- group_by(d, block)
+#by_block <- summarise(by_block, block_mean = mean(rt), block_sd = sd(rt))
+
+d_RT_block_mean <- d %>%
+  group_by(pair, chamber, block) %>%
+  summarise(mean_RT = mean(rt))%>%
+  group_by(block) %>%
+  summarise(mean_RT = mean(mean_RT))
+
+
+plot_rt <- ggplot(d_RT_block_mean, aes(as.factor(block), mean_RT, group = 1)) +
+  geom_point() +
+  geom_line() +
+  labs(#title = "Mean RT across blocks",
+       x = "Block number",
+       y = "Mean RT (s)") +
+  ylim(0, 1.6) + theme_pubr(base_size = 14)
+  #theme_minimal_grid(font_size = 15) # use theme_pubr() instead
+  #theme_minimal((axis.text = element_text(size = 15),
+  #      axis.title = element_text(size = 15),
+  #      panel.grid.major = element_line(color = "gray", linetype = "solid"),
+  #      panel.grid.minor = element_blank())
+
+print(plot_rt)
+#ggsave("EDA-RT-plot.svg", plot = plot_rt, width = 30, height = 20, units = "cm")
+```
+
+# Check accuracy
+- do they fall within a reasonable range of around 75%? I don't want people to get too good at the task (>90%) nor too bad at the task (<65%)
+
+```{r message=FALSE, warning=FALSE}
+
+#### mean accuracy/performance calculations ####
+
+# averaged accuracy of everyone per block
+
+# calculating the mean accuracy by counting the number of trials where
+# correct_n == 1 (indicating a correct response) and dividing it by the total
+# number of trials (n()) for each pair and chamber. This approach calculates the
+# proportion of correct responses and gives you the mean correct proportion for
+# each pair and chamber.
+
+d_accuracy_summary <- d %>%
+  group_by(pair, chamber) %>%
+  summarise(mean_correct = sum(correct_n == 1) / n()) 
+
+d_accuracy_summary
+mean(d_accuracy_summary$mean_correct) # 0.736555; 73.6%
+sd(d_accuracy_summary$mean_correct) # 0.058; 5.8%
+
+# there are two people from two different pair having lower accuracy than 0.6
+# i don't think i will remove them because they passed the practice and training
+
+below_threshold <- d_accuracy_summary[d_accuracy_summary$mean_correct < 0.6, ]
+
+# each 66 person's mean accuracy by block
+
+d_accuracy_block_summary <- d %>%
+  group_by(pair, chamber, block) %>%
+  summarise(mean_correct = sum(correct_n == 1) / n()*100)
+
+# everyone's mean accuracy by block with visualization
+
+d_accuracy_block_mean <- d %>%
+  group_by(pair, chamber, block) %>%
+  summarise(mean_correct = sum(correct_n == 1) / n() * 100) %>%
+  group_by(block) %>%
+  summarise(mean_accuracy = mean(mean_correct))
+
+# Plotting 1: averaged performance for all throughout the 10 blocks
+
+plot_accuracy_1 <- ggplot() +
+  geom_point(data = d_accuracy_block_mean, aes(x = factor(block), y = mean_accuracy)) +
+  geom_line(data = d_accuracy_block_mean, aes(x = factor(block), y = mean_accuracy), group = 'block') +
+  ylim(60, 80) +
+  labs(#title = "Mean performance across blocks",
+       x = "Block number",
+       y = "Mean accuracy (%)") + theme_pubr(base_size = 14)
+  #theme_minimal_grid(font_size = 15) # use theme_pubr() instead
+  #theme_classic() +
+  #theme(axis.text = element_text(size = 15),
+  #      axis.title = element_text(size = 15))
+
+plot_accuracy_1
+
+#ggsave("EDA-plot-accuracy.svg", plot = plot_accuracy_1, width = 30, height = 20, units = "cm")
+
+# Plotting 2: each 66 individual's mean accuracy shown across 10 blocks
+
+plot_accuracy <- ggplot() +
+  geom_point(data = d_accuracy_block_summary, aes(x = factor(block), y = mean_correct, alpha = 1/100, colour = interaction(factor(pair), factor(chamber)), group = interaction(factor(pair), factor(chamber)))) +
+  geom_line(data = d_accuracy_block_summary, aes(x = factor(block), y = mean_correct, alpha = 1/100, colour = interaction(factor(pair), factor(chamber)), group = interaction(factor(pair), factor(chamber)))) +
+  geom_point(data = d_accuracy_block_mean, aes(x = factor(block), y = mean_accuracy, size = 4)) +
+  geom_line(data = d_accuracy_block_mean, aes(x = factor(block), y = mean_accuracy, size = 1), group = 'block') +
+  labs(title = "Mean Accuracy Change Over Time",
+       x = "Block Number",
+       y = "Mean Accuracy") +
+  apatheme +
+  theme(legend.position = "none")
+
+plot_accuracy
+
+```
+
+# coherence levels calculation
+
+- check the coherence level over time i.e., averaged across trials for each participant.
+- wanted to include this to see if the ddm is doing its thing adapting against fatigues and learning
+
+```{r}
+# Calculate the mean coherence across blocks for all
+range(d$coherence) # 0.06835911 0.70896281
+mean(d$coherence) # 0.2126868
+sd(d$coherence) # 0.08521328
+
+# Plot 1: Calculate mean coherence for everyone per block
+d_coherence_block_mean <- d %>%
+  group_by(pair, chamber, block) %>%
+  summarise(mean_coherence = mean(coherence)) %>%
+  group_by(block) %>%
+  summarise(mean_coherence_all = mean(mean_coherence))
+
+plot_coherence_mean <- ggplot(d_coherence_block_mean, aes(x = factor(block), y = mean_coherence_all)) +
+  geom_point() +
+  geom_line(aes(group = 'block')) +  # Set appropriate y-axis limits for coherence values
+  labs(#title = "Mean coherence threshold across blocks",
+       x = "Block Number",
+       y = "Mean coherence") + 
+  ylim(0, 0.25) + theme_pubr(base_size = 14)
+  #theme_minimal_grid(font_size = 15)
+  #theme(axis.text = element_text(size = 15),
+  #      axis.title = element_text(size = 15))
+
+print(plot_coherence_mean)
+
+#ggsave("EDA-plot-coherence.svg", plot = plot_coherence_mean, width = 30, height = 20, units = "cm")
+
+# Calculate range, standard deviation, and mean across blocks for everyone
+summary_stats <- d_coherence_block_mean %>%
+  summarise(
+    coherence_range = range(mean_coherence_all),
+    coherence_sd = sd(mean_coherence_all),
+    coherence_mean = mean(mean_coherence_all)
+  )
+
+# Print the summary statistics
+print(summary_stats)
+
+# coherence_range: The range of mean coherence values across blocks, calculated as the difference between the maximum and minimum values.
+# 
+# coherence_sd: The standard deviation of the mean coherence values across blocks, providing a measure of the variability or spread of these values.
+# 
+# coherence_mean: The mean of the mean coherence values across blocks, giving an average value for coherence across the different blocks.
+
+# Plot 2: calculate mean coherence for each participant per block
+
+d_coherence_block_mean_each <- d %>%
+  group_by(pair, chamber, block) %>%
+  summarise(mean_coherence_each = mean(coherence))
+
+plot_coherence <- ggplot(d_coherence_block_mean_each, aes(x = factor(block), y = mean_coherence_each, group = interaction(pair, chamber))) +
+  geom_point(size = 3, aes(color = interaction(pair, chamber))) +
+  geom_line(size = 1, aes(color = interaction(pair, chamber))) +
+  ylim(0.15, 0.25) +  # Set appropriate y-axis limits for coherence values
+  labs(#title = "Mean coherence threshold across blocks",
+       x = "Block Number",
+       y = "Mean Coherence") +
+  apatheme +
+  theme(legend.position = "none")
+
+print(plot_coherence)
+
+# Plot 3: each person's coherence level across blocks
+plot_individual_coherence <- ggplot(d, aes(x = factor(block), y = coherence, group = interaction(pair, chamber), color = interaction(pair, chamber))) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  labs(#title = "Individual Coherence Levels Across Blocks",
+       x = "Block Number",
+       y = "Coherence") +
+  ylim(0, 1) +
+  apatheme +
+  theme(legend.position = "none")
+
+print(plot_individual_coherence)
+
+# Save the plot
+#ggsave("Individual-Coherence-Levels.svg", plot = plot_individual_coherence, width = 30, height = 20, units = "cm")
+
+```
+
+# put the plots together
+
+```{r}
+library(cowplot)
+# Combine the three plots into one figure
+label_size <- 20
+combined_plot <- cowplot::plot_grid(plot_rt, plot_accuracy_1, plot_coherence_mean,
+                           ncol = 1,
+                           labels = c("a", "b", "c"),
+                           label_size = label_size)
+                           #label_x = 0.03,
+                           #labels = c("A", "B", "C"))
+# Print the combined plot
+print(combined_plot)
+ggsave("Fig_4_EDA-combined-plots.pdf", plot = combined_plot, width = 30, height = 25, units = "cm")
+
+```
+
+# Correlations between coherence, accuracy, RT
+
+```{r message=FALSE, warning=FALSE}
+
+#### coherence and accuracy ####
+d_coherence_block_summary <- d %>%
+  group_by(pair, chamber, block) %>%
+  summarise(coherence = mean(coherence))
+
+d_coherence_block_summary$accuracy <- d_accuracy_block_summary$mean_correct
+
+plot_correlation_coh_acc <- ggplot(data=d_coherence_block_summary, aes(x=accuracy, y=coherence))+
+  geom_point()+
+  geom_smooth(method = lm)+
+  apatheme+
+  theme(legend.position = "none")
+
+plot_correlation_coh_acc
+
+cor.test(d_coherence_block_summary$coherence, d_coherence_block_summary$accuracy)
+
+# a positive correlation suggests that as the coherence of the dots increases
+# (making the task easier), participants tend to have higher accuracy
+
+#### coherence and RT ####
+
+plot_correlation_rt_coh <- ggplot(data=d, aes(x=rt,y=coherence))+
+  geom_point()+
+  geom_smooth(method = lm)+
+  apatheme+
+  theme(legend.position = "none")
+
+plot_correlation_rt_coh
+
+cor.test(d$coherence, d$rt)
+
+# a small negative relationship between coherence and RT. 
+# as the coherence of the dots increases (indicating an easier task),
+# participants tend to exhibit faster reaction times
+
+#### accuracy and RT ####
+
+d_rt_block_summary <- d %>%
+  group_by(pair, chamber, block) %>%
+  summarise(rt = mean(rt))
+
+d_rt_block_summary$accuracy <- d_accuracy_block_summary$mean_correct
+
+plot_correlation_rt_acc <- ggplot(data=d_rt_block_summary, aes(x=rt,y=accuracy))+
+  geom_point()+
+  geom_smooth(method = lm)+
+  apatheme+
+  theme(legend.position = "none")
+
+plot_correlation_rt_acc
+
+cor.test(d_rt_block_summary$rt, d_rt_block_summary$accuracy)
+
+# as the coherence of the dots increases (representing an easier task),
+# participants tend to have higher accuracy rates.
+
+```
+
+
+# Participants' repeat probabilities/behavioral strategy (accuracy excluded)
+
+1. averaged across all 66 individuals
+- here, we calculated the averaged repeat probability across each individual (total is 66) - taking all the previous trials performed by the same acting agent or not, and calculate the average probability to repeat, this is because i wanted to see the individual variations in terms of history bias i.e., not caring about the social/dyadic influence (yet).
+
+2. averaged across all dyads (maybe skip this for now)
+
+## repeat probability calculation
+
+- had some slight difficulty for plotting using this
+
+```{r}
+# Calculate the repeat probabilities for after self and after partner
+repeat_prob <- d %>%
+  filter(!is.na(last_done_by_self)) %>%
+  group_by(individual_id, last_done_by_self) %>%
+  summarise(repeat_prob = sum(repeat_prev_resp == 1) / n()) %>%
+  mutate(repeat_prob_percentage = repeat_prob * 100)
+
+head(repeat_prob)
+```
+
+## repeat probability calculation II
+
+- i checked to visualize using this function with one csv file. therefore the code is fine, and can be applied to all the participants.
+
+```{r}
+# Define a function to compute the repeat probability for trials where the 
+# previous response was made by the same participant ("own"), and where it was
+# not made by the same participant ("partner"). This function helps in analyzing
+# whether participants are more likely to repeat their previous response
+# based on whomade the last response.
+
+prob <- function(dataframe, participant_n_1){
+  
+  # Filter the dataframe to include only trials where the previous response was 
+  # made by the participant themselves (participant_n_1 == 1) or partner
+  # Remove any rows with missing values in the participant_n_1 column.
+  dataframe_own <- dataframe[dataframe$participant_n_1 == 1 & !is.na(dataframe$participant_n_1), ]
+  dataframe_partner <- dataframe[dataframe$participant_n_1 == -1 & !is.na(dataframe$participant_n_1), ]
+  
+  # For the trials where the previous response was made by the same participant 
+  # calculate the probability of repeating the same response. This 
+  # is done by grouping the data by the 'pair' and 'chamber' columns and then 
+  # calculating the proportion of trials where the response was repeated 
+  # (repeat_prev_resp == 1).
+  repeat_prob_own <- dataframe_own %>%
+    group_by(pair, chamber) %>%
+    summarise(repeat_prob_own = sum(repeat_prev_resp == 1)/n())
+
+  repeat_prob_partner <- dataframe_partner %>%
+    group_by(pair, chamber) %>%
+    summarise(repeat_prob_partner = sum(repeat_prev_resp == 1)/n())
+
+  return(list(repeat_prob_own = repeat_prob_own, repeat_prob_partner = repeat_prob_partner))
+}
+
+# Call the function and summarize the results
+repeat_prob_results <- prob(d, 1)
+
+d1 <- data.frame(
+  pair = repeat_prob_results$repeat_prob_own$pair,
+  chamber = repeat_prob_results$repeat_prob_own$chamber,
+  repeat_prob_own = repeat_prob_results$repeat_prob_own$repeat_prob_own,
+  repeat_prob_partner = repeat_prob_results$repeat_prob_partner$repeat_prob_partner
+)
+
+d1
+
+# some descriptive stats
+average_repeat_prob_own <- mean(d1$repeat_prob_own) # 0.5225361
+sd_repeat_prob_own <- sd(d1$repeat_prob_own) # 0.07988518
+average_repeat_prob_partner <- mean(d1$repeat_prob_partner) # 0.4713948
+sd_repeat_prob_partner <- sd(d1$repeat_prob_partner) # 0.04075678
+
+# convert the pair and chamber variables to factors
+d1$pair <- factor(d1$pair)
+d1$chamber <- factor(d1$chamber)
+
+# create individual_id column
+d1$individual_id <- paste(d1$pair, gsub("chamber_", "", d1$chamber), sep = "")
+
+# Reshape the data to long format
+d1_long <- tidyr::pivot_longer(d1, cols = c(repeat_prob_own, repeat_prob_partner),
+                               names_to = "trial_type", values_to = "repeat_prob")
+
+# Multiply repeat probabilities by 100
+d1_long$repeat_prob <- d1_long$repeat_prob * 100
+
+# Rename trial types
+d1_long$trial_type <- ifelse(d1_long$trial_type == "repeat_prob_own", "After Own", "After Partner")
+
+# Visualize the updated repeat probabilities
+repeat_prob_plot <- ggplot(d1_long, aes(x = individual_id, y = repeat_prob, fill = trial_type)) +
+  geom_bar(stat = "identity", position = position_dodge(preserve = 'single')) +
+  labs(x = "Individual ID", y = "Repeat Probability (%)", fill = "Trial Type") +
+  theme_pubr(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 9),
+    legend.title = element_blank(),
+    legend.position = "right"
+  )
+
+print(repeat_prob_plot)
+
+ggsave("Supp_Fig_1_repeat_prob.pdf", plot = repeat_prob_plot, width = 30, height = 20, units = "cm")
+#ggsave("Supp_Fig_1_repeat_prob.svg", plot = repeat_prob_plot, width = 30, height = 20, units = "cm")
+
+# # Visualize the density of repeat probabilities
+# ggplot(d1_long, aes(x = repeat_prob, fill = trial_type)) +
+#   geom_density(alpha = 0.5) +
+#   labs(x = "Repeat Probability (%)", fill = "Trial Type") +
+#   apatheme
+
+# the width/thickness represents the spread or variability of the data i.e., 
+# fatter means dispersed or spread out across different values of the variable. 
+# the width of the curve gives you an idea of the variability or dispersion of
+# the repeat probabilities in this case.
+```
+
+# Participants' repeat probabilities/behavioral strategy (accuracy included)
+
+```{r}
+
+d <- d %>%
+  mutate(repeat_prev_resp = ifelse(repeat_prev_resp == 1, TRUE, FALSE))
+
+# write a function that computes the repeat probability for a subject:
+# 1) after incorrect partner trial
+# 2) after incorrect own trial
+# 3) after correct partner trial
+# 4) after correct own trial
+
+repeat_prob <- function(dataframe, participant_n_1, correct_n_1){
+
+  dataframe <- dataframe[which(dataframe["participant_n_1"] == participant_n_1),]
+  dataframe <- dataframe[which(dataframe["correct_n_1"] == correct_n_1),]
+
+    if (participant_n_1 == 1 & correct_n_1 == 1) {
+      return(dataframe %>% group_by(pair, chamber) %>%
+           summarise(repeat_prob_own_correct = mean(((repeat_prev_resp)))))
+    }
+   if (participant_n_1 == 1 & correct_n_1 == -1) {
+      return(dataframe %>% group_by(pair, chamber) %>%
+           summarise(repeat_prob_own_error = mean(((repeat_prev_resp)))))
+   }
+   if (participant_n_1 == -1 & correct_n_1 == 1) {
+      return(dataframe %>% group_by(pair, chamber) %>%
+           summarise(repeat_prob_partner_correct = mean(((repeat_prev_resp)))))
+   }
+   if (participant_n_1 == -1 & correct_n_1 == -1) {
+      return(dataframe %>% group_by(pair, chamber) %>%
+           summarise(repeat_prob_partner_error = mean(((repeat_prev_resp)))))
+   }
+
+}
+
+# call the function and summarize the results, then save all in one dataframe d1
+
+d1<- repeat_prob(d, 1, 1)
+d1$repeat_prob_own_error <- repeat_prob(d, 1, -1)$repeat_prob_own_error
+d1$repeat_prob_partner_correct <- repeat_prob(d, -1, 1)$repeat_prob_partner_correct
+d1$repeat_prob_partner_error <- repeat_prob(d, -1, -1)$repeat_prob_partner_error
+
+d1
+
+all_data <- d1 %>%  pivot_longer(!c(pair,chamber), names_to = c("set",".value"),
+               names_pattern = "(own|partner)_(correct|error)") %>% mutate(line_index=paste(pair,chamber))
+
+ggplot(all_data,aes(x=error,y=correct)) +
+  geom_point(aes(color=set)) +
+  geom_line(aes(group=line_index))+
+  geom_hline(yintercept = 0.5, color = "black", size =0.5)+
+  geom_vline(xintercept = 0.5, color = "black", size =0.5)+
+  annotate("text", x = 0.75, y=0.6, label = "Stay")+
+  annotate("text", x = 0.4, y=0.6, label = "Win Stay\nLose Switch")+
+  annotate("text", x = 0.35, y=0.4, label = "Switch")+
+  annotate("text", x = 0.75, y=0.4, label = "Win Switch\nLose Stay")+
+  xlab("P(repeat) after error")+
+  ylab("P(repeat) after correct")+
+  ggtitle("Behavioral Strategy")+
+  apatheme
+
+# add variable to highlight upper right box (stay after correct)
+all_data = all_data %>% mutate(
+     stay= case_when(
+         correct>=.5 & error>=.5 ~ 1,
+         TRUE ~ 0
+     )
+)
+
+all_data = all_data %>% mutate(
+     switch = case_when(
+         correct<=.5 & error<=.5 ~ 1,
+         TRUE ~ 0
+     )
+)
+
+all_data = all_data %>% mutate(
+     stay_switch = case_when(
+         set == 'own' & lead(switch) == 1 & stay == 1 ~ 1,
+         TRUE ~ 0
+     )
+)
+
+all_data = all_data %>% mutate(
+     stay_switch = case_when(
+         set == 'partner' & lag(stay_switch) == 1 ~ 1,
+         set == 'own' & stay_switch == 1 ~ 1,
+         TRUE ~ 0
+     )
+)
+
+#plot the same as above but highlight (transparency) the data that is in the right upper box
+
+# one_pair <-all_data[all_data$pair==20220518,];
+#
+ggplot(all_data,aes(x=error,y=correct)) +
+  geom_point(aes(color=set, alpha = stay_switch)) +
+  geom_line(aes(group=line_index, alpha=stay_switch))+
+  geom_hline(yintercept = 0.5, color = "black", size =0.5)+
+  geom_vline(xintercept = 0.5, color = "black", size =0.5)+
+  annotate("text", x = 0.75, y=0.6, label = "Stay")+
+  annotate("text", x = 0.4, y=0.6, label = "Win Stay\nLose Switch")+
+  annotate("text", x = 0.35, y=0.4, label = "Switch")+
+  annotate("text", x = 0.75, y=0.4, label = "Win Switch\nLose Stay")+
+  xlab("P(repeat) after error")+
+  ylab("P(repeat) after correct")+
+  ggtitle("Behavioral Strategy")+
+  apatheme
+
+#People tend to repeat the action that their partner made even though it was incorrect when their partner made it?
+#they switch if their partner made a correct decision?
+```

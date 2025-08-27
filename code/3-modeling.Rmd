@@ -1,0 +1,581 @@
+---
+title: "Models"
+author: "Ann Huang"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+  word_document: default
+  beamer_presentation: default
+  slidy_presentation: default
+  html_document:
+    toc: true
+    toc_depth: 2
+    df_print: paged
+---
+# load data
+
+```{r}
+# remove everything
+rm(list=ls())
+
+# load required packages
+library(tidyverse)
+library(dplyr)
+library(sjPlot)
+library(performance)
+library(sjmisc)
+library(sjlabelled)
+library(report)
+library(coefplot)
+library(ggplot2)
+library(ggeffects)
+
+apatheme=theme_bw()+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.border=element_blank(),
+        axis.line=element_line(color="black"),
+        text=element_text(size=10),
+        legend.title=element_blank())
+
+```
+
+```{r}
+# set working directory
+setwd("~/Desktop/DDM")
+
+# load pre-processed data
+list_all_files <-list.files("./raw_data/main_experiment/",full.names = TRUE)
+lists <- lapply(list_all_files,read.csv, header=TRUE)
+d<-do.call("rbind",lapply(list_all_files,read.csv, header=TRUE))
+
+leftward_count <- sum(d$response_n == 0) # 16,302
+rightward_count <- sum(d$response_n == 1) # 16,698
+
+sum(is.na(d)) # 37513 total NAs
+dim(d) # 33000 obs 38 vars
+
+# d_selected_own <- d %>%
+#   select(block, trial, response_n_effect_code,chamber,own_last_responses,
+#          own_last_responses_2, own_last_responses_3, own_last_responses_4,
+#          own_last_responses_5)
+# 
+# d_selected_partner <- d %>%
+#   select(block, trial, response_n_effect_code,chamber, other_last_responses,
+#          other_last_responses_2, other_last_responses_3, other_last_responses_4,
+#          other_last_responses_5)
+# 
+# View(d_selected_own)
+# View(d_selected_partner)
+
+# sum(is.na(d_selected_own)) # 9900
+# sum(is.na(d_selected_partner)) # 9927
+
+```
+
+# drop NAs
+
+- drop NAs right now so the more complex variables can be created without issues
+- handle the RT cutoff later
+
+```{r}
+# drop the rows with the NAs before the models see the data
+d <- na.omit(d) # check
+
+sum(is.na(d)) # check if you have dropped
+dim(d) #  28865    53
+```
+
+# create variables using conditional effect coding
+
+```{r}
+# we performed effect coding that is conditional
+# OL*A codes for actor at 2-back, but under the conditions
+# that 1-back was self and left
+
+# the first code line creates a new variable OL*A in your data frame d
+# The ifelse function checks the following conditions:
+# 1) d$previous_actor == 1: was the actor at 1-back own (coded as 1)?
+# 2) d$response_n_1 == -1: was the decision at 1-back "left" (coded as -1)?
+# 3) d$previous_actor_2 == 1: was the actor at 2-back own (coded as 1)?
+
+# If all these conditions are true, it assigns the value +1 to OLA
+# If any of the conditions are false, it assigns -1 to OLA
+
+# the second code line "refines" the values in OL*A where OL*A has been previously set to -1
+# It checks the same conditions once AGAIN:
+# 1) d$previous_actor == 1: was the actor at 1-back own?
+# 2) d$response_n_1 == -1: was the decision at 1-back "left"?
+# 3) d$previous_actor_2 == -1: was the actor at 2-back the partner (coded as -1)?
+# if all these conditions are not met, it assigns 0 to OLA
+
+# example case where 0 would be assigned; suppose we have a trial that is:
+# previous_actor = -1 (partner acted at 1-back)
+# response_n_1 = -1 (decision at 1-back was left)
+# previous_actor_2 = 1 (own acted at 2-back)
+
+# running through the first code line, it will not pass the first ifelse condition
+# where previous_actor == 1; because actor at 1-back was partner, not own
+# however, for response_n_1 == -1, this is true
+# and for previous_actor_2 == 1, this is also true
+# for now, OL*A is assigned to -1
+
+# running through the second code line that checks the 1-back own/left conditions once again
+# it will not pass the first ifelse condition
+# where previous_actor == 1; because partner acted at 1-back, not own
+# for response_n_1 == -1, this is still true
+# for previous_actor_2 == 1, this is false because partner acted at 2-back
+
+# thus, since not all conditions are true, OL*A is not set to 0
+
+d$OLA <- ifelse(d$previous_actor == 1 & d$response_n_1 == -1  & d$previous_actor_2 == 1, 1, -1)
+d$OLA[d$OLA == -1] <- ifelse(d$previous_actor == 1 & d$response_n_1 == -1  & d$previous_actor_2 == -1, -1, 0)
+
+d_selected_prev <- d %>%
+  select(block, trial, individual_id, response_n_effect_code,previous_actor,response_n_1,previous_actor_2, response_n_2, OLA)
+View(d_selected_prev)
+
+# OL*D: this variable codes for decision 2-back
+# conditioned on the fact that 1-back was self and left
+d$OLD <- ifelse(d$previous_actor == 1 & d$response_n_1 == -1  & d$response_n_2 == 1, 1, -1)
+d$OLD[d$OLD == -1] <- ifelse(d$previous_actor == 1 & d$response_n_1 == -1  & d$response_n_2 == -1, -1, 0)
+
+# OR*A: this variable codes for actor 2-back
+# conditioned on the fact that 1-back was self and right
+d$ORA <- ifelse(d$previous_actor == 1 & d$response_n_1 == 1  & d$previous_actor_2 == 1, 1, -1)
+d$ORA[d$ORA == -1] <- ifelse(d$previous_actor == 1 & d$response_n_1 == 1  & d$previous_actor_2 == -1, -1, 0)
+
+# OR*D: this variable codes for decision 2-back
+# conditioned on the fact that 1-back was self and right
+d$ORD <- ifelse(d$previous_actor == 1 & d$response_n_1 == 1  & d$response_n_2 == 1, 1, -1)
+d$ORD[d$ORD == -1] <- ifelse(d$previous_actor == 1 & d$response_n_1 == 1  & d$response_n_2 == -1, -1, 0)
+
+# PL*A: this variable codes for actor 2-back
+# conditioned on the fact that 1-back was partner and left
+d$PLA <- ifelse(d$previous_actor == -1 & d$response_n_1 == -1  & d$previous_actor_2 == 1, 1, -1)
+d$PLA[d$PLA == -1] <- ifelse(d$previous_actor == -1 & d$response_n_1 == -1  & d$previous_actor_2 == -1, -1, 0)
+
+# PL*D: this variable codes for decision 2-back
+# conditioned on the fact that 1-back was partner and left
+d$PLD <- ifelse(d$previous_actor == -1 & d$response_n_1 == -1  & d$response_n_2 == 1, 1, -1)
+d$PLD[d$PLD == -1] <- ifelse(d$previous_actor == -1 & d$response_n_1 == -1  & d$response_n_2 == -1, -1, 0)
+
+# PR*A: this variable codes for actor 2-back
+# conditioned on the fact that 1-back was partner and right
+d$PRA <- ifelse(d$previous_actor == -1 & d$response_n_1 == 1  & d$previous_actor_2 == 1, 1, -1)
+d$PRA[d$PRA == -1] <- ifelse(d$previous_actor == -1 & d$response_n_1 == 1  & d$previous_actor_2 == -1, -1, 0)
+
+# PR*D: this variable codes for decision 2-back
+# conditioned on the fact that 1-back was partner and right
+d$PRD <- ifelse(d$previous_actor == -1 & d$response_n_1 == 1  & d$response_n_2 == 1, 1, -1)
+d$PRD[d$PRD == -1] <- ifelse(d$previous_actor == -1 & d$response_n_1 == 1  & d$response_n_2 == -1, -1, 0)
+```
+
+we also include the previous stimuli at delay of 1 and 2
+
+- we have to assume not just the previous decision influence the current choice, but also the previous task stimulus
+- because the current stimulus is not exactly the stimulus they saw at 1-back or 2-back
+
+```{r}
+# the variable OSL*A codes for at actor at 2-back is
+# conditioned on the fact that the 1-back was own and the stimulus was leftward
+
+# in detail, the variable OSLA codes for the actor at 2-back
+# but under the condition that 1-back was "own" and the stimulus was "left"
+# It uses conditional effect coding to account for these specific conditions
+
+# the first line of code creates a new variable OSL*A
+# the ifelse function checks the following conditions:
+# 1) d$previous_actor == 1: Was the actor at 1-back "own" (coded as 1)?
+# 2) d$stimulus_n_1 == -1: Was the stimulus at 1-back "left" (coded as -1)?
+# 3) d$previous_actor_2 == 1: Was the actor at 2-back "own" (coded as 1)?
+
+# if all these conditions are true, it assigns the value +1 to OSLA (indicating "own" at 2-back)
+# if any of these conditions are false, it assigns -1 to OSLA (indicating "partner" at 2-back) 
+
+# the second line of code refines the values in OSLA where OSLA has been previously set to -1
+# it checks the same conditions once again:
+# 1) d$previous_actor == 1: Was the actor at 1-back "own"?
+# 2) d$stimulus_n_1 == -1: Was the stimulus at 1-back "left"?
+# 3) d$previous_actor_2 == -1: Was the actor at 2-back "partner" (coded as -1)?
+
+# if these conditions are met, it keeps OSL*A as -1
+# if the conditions are not met, it assigns 0 to OSL*A
+# indicating that the 1-back condition of "own" with "left" was not satisfied
+
+d$OSLA <- ifelse(d$previous_actor == 1 & d$stimulus_n_1 == -1  & d$previous_actor_2 == 1, 1, -1)
+d$OSLA[d$OSLA == -1] <- ifelse(d$previous_actor == 1 & d$stimulus_n_1 == -1  & d$previous_actor_2 == -1, -1, 0)
+
+d_selected_prev_stimulus <- d %>%
+  select(block, trial, individual_id, stimulus_n, stimulus_n_1, previous_actor, previous_actor_2, OSLA)
+View(d_selected_prev_stimulus)
+
+# OSL*S: this variable codes for stimulus 2-back is conditioned
+# on the fact that 1-back was self and stimulus was left
+d$OSLS <- ifelse(d$previous_actor == 1 & d$stimulus_n_1 == -1  & d$stimulus_n_2 == 1, 1, -1)
+d$OSLS[d$OSLS == -1] <- ifelse(d$previous_actor == 1 & d$stimulus_n_1 == -1  & d$stimulus_n_2 == -1, -1, 0)
+
+# OSR*A: this variable codes for actor 2-back is conditioned
+# on the fact that 1-back was self and stimulus was right
+d$OSRA <- ifelse(d$previous_actor == 1 & d$stimulus_n_1 == 1  & d$previous_actor_2 == 1, 1, -1)
+d$OSRA[d$OSRA == -1] <- ifelse(d$previous_actor == 1 & d$stimulus_n_1 == 1  & d$previous_actor_2 == -1, -1, 0)
+
+# OSR*S: this variable codes for stimulus 2-back is conditioned
+# on the fact that 1-back was self and stimulus right
+d$OSRS <- ifelse(d$previous_actor == 1 & d$stimulus_n_1 == 1  & d$stimulus_n_2 == 1, 1, -1)
+d$OSRS[d$OSRS == -1] <- ifelse(d$previous_actor == 1 & d$stimulus_n_1 == 1  & d$stimulus_n_2 == -1, -1, 0)
+
+# PSL*A: this variable codes for actor 2-back is conditioned
+# on the fact that 1-back was partner and stimulus was left
+d$PSLA <- ifelse(d$previous_actor == -1 & d$stimulus_n_1 == -1  & d$previous_actor_2 == 1, 1, -1)
+d$PSLA[d$PSLA == -1] <- ifelse(d$previous_actor == -1 & d$stimulus_n_1 == -1  & d$previous_actor_2 == -1, -1, 0)
+
+# PSL*S: this variable codes for stimulus 2-back is conditioned
+# on the fact that 1-back was partner and stimulus was left
+d$PSLS <- ifelse(d$previous_actor == -1 & d$stimulus_n_1 == -1  & d$stimulus_n_2 == 1, 1, -1)
+d$PSLS[d$PSLS == -1] <- ifelse(d$previous_actor == -1 & d$stimulus_n_1 == -1  & d$stimulus_n_2 == -1, -1, 0)
+
+# PSR*A: this variable codes for actor 2-back is conditioned
+# on the fact that 1-back was partner and stimulus was right
+d$PSRA <- ifelse(d$previous_actor == -1 & d$stimulus_n_1 == 1  & d$previous_actor_2 == 1, 1, -1)
+d$PSRA[d$PSRA == -1] <- ifelse(d$previous_actor == -1 & d$stimulus_n_1 == 1  & d$previous_actor_2 == -1, -1, 0)
+
+# PSR*S: this variable codes for stimulus 2-back is conditioned
+# on the fact that 1-back was partner and stimulus was right
+d$PSRS <- ifelse(d$previous_actor == -1 & d$stimulus_n_1 == 1  & d$stimulus_n_2 == 1, 1, -1)
+d$PSRS[d$PSRS == -1] <- ifelse(d$previous_actor == -1 & d$stimulus_n_1 == 1  & d$stimulus_n_2 == -1, -1, 0)
+```
+
+# Unifying the variables to simplify the model
+
+```{r}
+# the variable O*A codes for actor at 2-back
+# conditioned on the fact that the 1-back was own
+
+d$OA <- ifelse(d$previous_actor == 1 & d$previous_actor_2 == 1, 1, -1)
+d$OA[d$OA == -1] <- ifelse(d$previous_actor == 1 & d$previous_actor_2 == -1, -1, 0)
+
+# the variable O*D codes for decision 2-back
+# conditioned on the fact that 1-back was own
+
+d$OD <- ifelse(d$previous_actor == 1 & d$response_n_2 == 1, 1, -1)
+d$OD[d$OD == -1] <- ifelse(d$previous_actor == 1 & d$response_n_2 == -1, -1, 0)
+
+# the variable P*A codes for actor at 2-back
+# conditioned on the fact that 1-back was partner
+
+d$PA <- ifelse(d$previous_actor == -1 & d$previous_actor_2 == 1, 1, -1)
+d$PA[d$PA == -1] <- ifelse(d$previous_actor == -1 & d$previous_actor_2 == -1, -1, 0)
+
+# the variable P*D codes for decision 2-back
+# conditioned on the fact that 1-back was partner
+
+d$PD <- ifelse(d$previous_actor == -1 & d$response_n_2 == 1, 1, -1)
+d$PD[d$PD == -1] <- ifelse(d$previous_actor == -1 & d$response_n_2 == -1, -1, 0)
+
+# we need variables that will test the effect of the actor at 2-back is not
+# dependent on the actor and directional decision at 1-back
+# so further simply
+# **A codes for actor at 2-back
+# **D codes for decision at 2-back
+
+d$A <- ifelse(d$previous_actor_2 == 1, 1, -1)
+d$D <- ifelse(d$response_n_2 == 1, 1, -1)
+```
+
+## remove columns you don't need, also remove rows where RT criteria were not met
+
+- be sure to also drop the RT also
+
+```{r}
+# remove the columns repeat_prev_resp, last_done_by_self, last_not_done_by_self
+d <- subset(d, select = -repeat_prev_resp)
+d <- subset(d, select = -last_done_by_self)
+d <- subset(d, select = -last_not_done_by_self)
+# 
+# # drop the rows with the NAs before the models see the data
+# d <- na.omit(d) # check
+# 
+# sum(is.na(d)) # check if you have dropped
+# dim(d) #  28865    29
+
+# proceed to also drop the ones who didn't meet the RT cutoff criteria
+before_removal <- nrow(d)
+
+d <- d[d$rt > .1 & d$rt < 1.5,] # measured in seconds
+
+nrow(d) # after removal you have now 27351
+
+# precise calculation
+
+before_removal # 28865
+number_removed <- (before_removal - nrow(d))
+number_removed # 1514 removed (in terms of RT only)
+
+# removed trials in percentage
+(before_removal - nrow(d))/before_removal *100 #  5.245107 %
+
+dim(d) # 27351 obs 58 vars
+```
+
+# modeling steps
+
+```{r}
+# step 1: no history / task-only model
+# AIC 31453
+# BIC 31469.55
+
+task <- glm(formula = response_n ~ stimulus_n,
+           family = "binomial", data = d)
+
+summary(task)
+BIC(task)
+
+# step 2: a maximal choice history model
+# AIC: 31314
+# BIC: 31453.83
+
+max <- glm(formula = response_n ~ stimulus_n + previous_actor + response_n_1 +
+             previous_actor:response_n_1 +
+             
+             OLA + OLD + OLA:OLD +
+             ORA + ORD + ORA:ORD +
+             PLA + PLD + PLA:PLD +
+             PRA + PRD + PRA:PRD,
+           
+           family = "binomial", data = d)
+
+summary(max)
+BIC(max)
+
+# step 2a: an alternative maximal model that includes the stimulus at 1 and 2-back
+# AIC: 31357
+# BIC: 31480.05
+
+alt <- glm(formula = response_n ~ stimulus_n +
+               
+               previous_actor:stimulus_n_1 +
+               
+               OSLA + OSLS + OSLA:OSLS +
+               OSRA + OSRS + OSRA:OSRS +
+               PSLA + PSLS + PSLA:PSLS +
+               PSRA + PSRS + PSRA:PSRS,
+           
+             family = "binomial", data = d)
+
+summary(alt)
+BIC(alt)
+
+# formal model comparison
+anova(max, alt, test="Chisq")
+
+# AIC: 31294
+# BIC: 31368.08
+
+# step 3
+intermediate_model <- glm(formula = response_n ~ stimulus_n +
+               previous_actor:response_n_1 +
+               OA + OD + OA:OD +
+               PA + PD + PA:PD,
+             family = "binomial", data = d)
+
+summary(intermediate_model)
+BIC(intermediate_model)
+
+ggpredict(intermediate_model, terms = c("OA", "OD"))
+ggpredict(intermediate_model, terms = c("PA", "PD"))
+
+
+# step 4
+
+# AIC 31240
+# BIC 31305.46
+
+selected_with_symbols <- glm(formula = response_n ~ stimulus_n + previous_actor + response_n_1 +
+                 previous_actor:response_n_1 +
+                 A +
+                 D + A:D,
+
+    family = "binomial", data = d)
+
+summary(selected_with_symbols)
+BIC(selected_with_symbols)
+
+selected <- glm(formula = response_n ~ stimulus_n + previous_actor + response_n_1 +
+                  previous_actor:response_n_1 +
+                  previous_actor_2 + response_n_2 +
+                  previous_actor_2:response_n_2, family = "binomial", data = d)
+
+summary(selected)
+BIC(selected)
+
+pred_selected <- ggpredict(selected, terms = c("response_n_1", "previous_actor"))
+pred_selected
+
+interaction_plot <- plot(pred_selected, limits = c(0.50, 1)) +
+  ggtitle("Predicted probabilities of current response") +
+  xlab("Previous response") +
+  ylab("Probability of current response") +
+  scale_color_manual(name = "previous participant",
+                     labels = c("Partner", "Own"),
+                     values = c("red", "blue")) + apatheme
+print(interaction_plot)
+
+ggpredict(selected, terms = c("response_n_2", "previous_actor_2"))
+ggpredict(selected, terms = c("response_n_2"))
+
+models_present <- tab_model(task, max, intermediate_model, selected,
+  title = "Regression Modeling Steps",
+  dv.labels = c("Task-Only Model", "Maximal Choice History Model", "Intermediate Model", "Selected Choice History Model"),
+  #pred.labels = c("Intercept", "Stimulus_n", "Response_n-1", "Response_n-1 x
+  #participant_n-1", "Own last response", "Other last response", "Own last
+  #                response (lag = 2)", "Other last response (lag = 2)"),
+  auto.label = FALSE,
+  #show.est = TRUE,
+  #show.p = FALSE,
+  show.r2 = FALSE,
+  show.aic= TRUE,
+  show.ci = 0.95,
+  show.se = TRUE,
+  #show.dev = TRUE,
+  p.style = "numeric_stars",
+  transform = NULL
+  #file = "Regression_Table_Raw.doc"
+)
+print(models_present)
+```
+
+# report clustered standard errors
+
+```{r}
+# Load necessary libraries
+library(sandwich)
+library(lmtest)
+
+# Calculate clustered standard errors
+cluster_var <- d$individual_id
+
+# Computes the clustered covariance matrix for the 'task' model
+clustered_se <- sqrt(diag(vcovCL(intermediate_model, cluster = ~cluster_var)))
+
+# Display results
+#print(clustered_se)
+
+# Alternatively, you can directly use coeftest to get results with clustered standard errors
+#coeftest(task, vcov. = vcovCL(task, cluster = ~cluster_var))
+coeftest(intermediate_model, vcov. = vcovCL(intermediate_model, cluster = ~cluster_var))
+```
+
+# cross validated MSEs for the models
+
+```{r}
+library(caret)
+
+# 10 fold cross validation
+train_control <- trainControl(method = "cv", number = 10, savePredictions = TRUE)
+
+# task-only model (model 0)
+task <- train(response_n ~ stimulus_n,
+              data = d, 
+              method = "glm",
+              family = "binomial",
+              trControl = train_control)
+
+# maximal model (model 1)
+maximal <- train(
+  response_n ~ stimulus_n + previous_actor + response_n_1 +
+    previous_actor:response_n_1 +
+    
+    OLA + OLD + OLA:OLD +
+    ORA + ORD + ORA:ORD +
+    PLA + PLD + PLA:PLD +
+    PRA + PRD + PRA:PRD,
+  
+  data = d,
+  method = "glm",
+  family = "binomial",
+  trControl = train_control
+)
+
+# alternative model
+alt_mod <- train(response_n ~ stimulus_n +
+               
+               previous_actor:stimulus_n_1 +
+               
+               OSLA + OSLS + OSLA:OSLS +
+               OSRA + OSRS + OSRA:OSRS +
+               PSLA + PSLS + PSLA:PSLS +
+               PSRA + PSRS + PSRA:PSRS,
+           
+           data = d,
+           method = "glm",
+           family = "binomial",
+           trControl = train_control)
+
+# intermediate model (model 2)
+inter_mod <- train(response_n ~
+               stimulus_n +
+               previous_actor:response_n_1 +
+               OA + OD + OA:OD +
+               PA + PD + PA:PD,
+           data = d,
+           method = "glm",
+           family = "binomial",
+           trControl = train_control)
+
+# best model (model 3)
+selected_mod <- train(
+  response_n ~ stimulus_n + previous_actor + response_n_1 +
+    previous_actor:response_n_1 +
+    previous_actor_2 + response_n_2 +
+    previous_actor_2:response_n_2,
+
+  data = d,
+  method = "glm",
+  family = "binomial",
+  trControl = train_control
+)
+
+# Extract the cross-validated predictions
+pred_task <- task$pred
+pred_maximal <- maximal$pred
+pred_inter_mod <- inter_mod$pred
+pred_selected_mod <- selected_mod$pred
+
+# Calculate MSE for each model
+mse_task <- mean((pred_task$obs - pred_task$pred)^2)
+mse_maximal <- mean((pred_maximal$obs - pred_maximal$pred)^2)
+
+mse_inter <- mean((pred_inter_mod$obs - pred_inter_mod$pred)^2)
+mse_selected_mod <- mean((pred_selected_mod$obs - pred_selected_mod$pred)^2)
+
+print(paste("Cross-Validated MSE (Task-only Model):", mse_task))
+print(paste("Cross-Validated MSE (Maximal Model):", mse_maximal))
+
+print(paste("Cross-Validated MSE (Intermediate Model):", mse_inter))
+print(paste("Cross-Validated MSE (best model):", mse_selected_mod))
+```
+
+# compute cross validated model predictions accuracy
+
+```{r}
+# Convert predictions to binary
+pred_task$pred_binary <- ifelse(pred_task$pred > 0.5, 1, 0)
+pred_maximal$pred_binary <- ifelse(pred_maximal$pred > 0.5, 1, 0)
+
+pred_inter_mod$pred_binary <- ifelse(pred_inter_mod$pred > 0.5, 1, 0)
+pred_selected_mod$pred_binary <- ifelse(pred_selected_mod$pred > 0.5, 1, 0)
+
+# Calculate accuracy for each model
+accuracy_task <- mean(pred_task$obs == pred_task$pred_binary)
+accuracy_maximal <- mean(pred_maximal$obs == pred_maximal$pred_binary)
+
+accuracy_inter_mod <- mean(pred_inter_mod$obs == pred_inter_mod$pred_binary)
+accuracy_selected_mod <- mean(pred_selected_mod$obs == pred_selected_mod$pred_binary)
+
+print(paste("Cross-Validated Accuracy (Task-only Model):", accuracy_task))
+print(paste("Cross-Validated Accuracy (Maximal Model):", accuracy_maximal))
+print(paste("Cross-Validated Accuracy (Maximal Model):", accuracy_inter_mod))
+print(paste("Cross-Validated Accuracy (best model):", accuracy_selected_mod))
+```

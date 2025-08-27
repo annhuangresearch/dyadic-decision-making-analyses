@@ -1,0 +1,371 @@
+---
+title: 'preprocessing raw data'
+subtitle: preprocessing script for individual csv file
+output:
+  word_document:
+    toc: yes
+    toc_depth: '3'
+  html_document:
+    theme: lumen
+    df_print: paged
+    toc: yes
+    toc_float: yes
+    toc_collapsed: yes
+    toc_depth: 3
+---
+
+```{r}
+rm(list=ls())
+library(readr)
+library(tidyr)
+library(dplyr)
+library(tools)
+library(ggplot2)
+options(warn=-1)
+options(dplyr.summarise.inform = FALSE)
+
+apatheme=theme_bw()+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.border=element_blank(),
+        axis.line=element_line(color="black"),
+        text=element_text(size=10),
+        legend.title=element_blank())
+
+apatheme_2=theme_bw()+
+  theme(panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.border=element_blank(),
+        axis.line=element_line(color="black"),
+        axis.text.x = element_text(angle = 70, hjust = 1),
+        text=element_text(size=10),
+        legend.title=element_blank())
+```
+
+# preprocess function
+
+```{r}
+preprocess_data <- function(filename, outdir) {
+  # load the data
+  d <- read.csv(filename)
+  
+  # rename first column as block
+  colnames(d)[1] <- "block"
+
+  d <- d[d$block != -.5,] # remove practice trials
+  d$block <- d$block + 1 # add 1 to each block to not start from 0
+  d$trial <- d$trial + 1 # add 1 to each trial to not start from 0
+  
+  # delete unused columns
+  d <- subset(d, select = -drift_rate_1)
+  d <- subset(d, select = -drift_rate_2)
+  d <- subset(d, select = -bound_1)
+  d <- subset(d, select = -bound_2)
+  d <- subset(d, select = -offset_1)
+  d <- subset(d, select = -offset_2)
+  
+  # rename variable related to chamber
+  d$s1_state[d$s1_state == 'True'] <- 'chamber_1'
+  d$s1_state[d$s1_state == 'False'] <- 'chamber_2'
+  d$s1_state[d$s1_state == 'TRUE'] <- 'chamber_1'
+  d$s1_state[d$s1_state == 'FALSE'] <- 'chamber_2'
+  
+  # rename third column as chamber
+  colnames(d)[3] <- 'chamber'
+  
+  # create unique individual id
+  d$individual_id <- paste(d$pair, gsub("chamber_", "", d$chamber), sep = "")
+
+  #### own last response: first time to fifth time ####
+  # goal 1: find what the last response was given by the same identity ("the first last")
+  # goal 2: find what was the "last last" response given by the same identity ("the second last")
+  # goal 3: find the third last response
+  # goal 4: find the fourth last response
+  # goal 5: find the fifth last response
+  d$own_last_responses <- NA
+  d$own_last_responses_2 <- NA
+  d$own_last_responses_3 <- NA
+  d$own_last_responses_4 <- NA
+  d$own_last_responses_5 <- NA
+  
+  block_size <- 100  # Number of trials per block
+  num_blocks <- 10  # Total number of blocks
+  
+  for (block_number in 1:num_blocks) {
+    trial_start <- (block_number - 1) * block_size + 1  # Starting trial index of the block
+    trial_end <- block_number * block_size  # Ending trial index of the block
+    
+    for (idx in trial_start:trial_end) {
+      identity <- d$chamber[idx]
+      own_last_response <- NA
+      own_last_response_2 <- NA
+      own_last_response_3 <- NA
+      own_last_response_4 <- NA
+      own_last_response_5 <- NA
+      
+      i <- 1
+      while ((idx - i) >= trial_start) {
+        if (d$chamber[idx - i] == identity) {
+          own_last_response <- d$response[idx - i]
+          j <- idx - i
+          
+          while ((j - 1) >= trial_start) {
+            if (d$chamber[j - 1] == identity) {
+              own_last_response_2 <- d$response[j - 1]
+              break
+            }
+            j <- j - 1
+          }
+          
+          # Check for the third last response
+          k <- j - 1
+          while ((k - 1) >= trial_start) {
+            if (d$chamber[k - 1] == identity) {
+              own_last_response_3 <- d$response[k - 1]
+              break
+            }
+            k <- k - 1
+          }
+          
+          # Check for the fourth last response
+          l <- k - 1
+          while ((l - 1) >= trial_start) {
+            if (d$chamber[l - 1] == identity) {
+              own_last_response_4 <- d$response[l - 1]
+              break
+            }
+            l <- l - 1
+          }
+          
+          # Check for the fifth last response
+          m <- l - 1
+          while ((m - 1) >= trial_start) {
+            if (d$chamber[m - 1] == identity) {
+              own_last_response_5 <- d$response[m - 1]
+              break
+            }
+            m <- m - 1
+          }
+          
+          break
+        }
+        i <- i + 1
+      }
+      
+      # Assign the values to the respective variables
+      d$own_last_responses[idx] <- own_last_response
+      d$own_last_responses_2[idx] <- own_last_response_2
+      d$own_last_responses_3[idx] <- own_last_response_3
+      d$own_last_responses_4[idx] <- own_last_response_4
+      d$own_last_responses_5[idx] <- own_last_response_5
+    }
+  }
+  
+  #### other last response: first time to fifth time ####
+  # goal 1: find what the last response was given not by the same identity ("the first last")
+  # goal 2: find what was the "last last" response given not by the same identity ("the second last")
+  # goal 3: find the third last response
+  # goal 4: find the fourth last response
+  # goal 5: find the fifth last response
+  
+  d$other_last_responses <- NA
+  d$other_last_responses_2 <- NA
+  d$other_last_responses_3 <- NA
+  d$other_last_responses_4 <- NA
+  d$other_last_responses_5 <- NA
+  
+  block_size <- 100  # Number of trials per block
+  num_blocks <- 10  # Total number of blocks
+  
+  for (block_number in 1:num_blocks) {
+    trial_start <- (block_number - 1) * block_size + 1  # Starting trial index of the block
+    trial_end <- block_number * block_size  # Ending trial index of the block
+    
+    for (idx in trial_start:trial_end) {
+      identity <- d$chamber[idx]
+      other_last_response <- NA
+      other_last_response_2 <- NA
+      other_last_response_3 <- NA
+      other_last_response_4 <- NA
+      other_last_response_5 <- NA
+      
+      i <- 1
+      while ((idx - i) >= trial_start) {
+        if (d$chamber[idx - i] != identity) {
+          other_last_response <- d$response[idx - i]
+          j <- idx - i
+          
+          while ((j - 1) >= trial_start) {
+            if (d$chamber[j - 1] != identity) {
+              other_last_response_2 <- d$response[j - 1]
+              break
+            }
+            j <- j - 1
+          }
+          
+          # Check for the third last response
+          k <- j - 1
+          while ((k - 1) >= trial_start) {
+            if (d$chamber[k - 1] != identity) {
+              other_last_response_3 <- d$response[k - 1]
+              break
+            }
+            k <- k - 1
+          }
+          
+          # Check for the fourth last response
+          l <- k - 1
+          while ((l - 1) >= trial_start) {
+            if (d$chamber[l - 1] != identity) {
+              other_last_response_4 <- d$response[l - 1]
+              break
+            }
+            l <- l - 1
+          }
+          
+          # Check for the fifth last response
+          m <- l - 1
+          while ((m - 1) >= trial_start) {
+            if (d$chamber[m - 1] != identity) {
+              other_last_response_5 <- d$response[m - 1]
+              break
+            }
+            m <- m - 1
+          }
+          
+          break
+        }
+        i <- i + 1
+      }
+      
+      # Assign the values to the respective variables
+      d$other_last_responses[idx] <- other_last_response
+      d$other_last_responses_2[idx] <- other_last_response_2
+      d$other_last_responses_3[idx] <- other_last_response_3
+      d$other_last_responses_4[idx] <- other_last_response_4
+      d$other_last_responses_5[idx] <- other_last_response_5
+    }
+  }
+  
+  
+
+  
+  #### re-code the own/other last responses into 1/-1 ####
+  d <- d %>% mutate(own_last_responses = ifelse(d$own_last_responses == 
+                                         "right", 1, -1)) # 1 is right,-1 is left
+  d <- d %>% mutate(own_last_responses_2 = ifelse(d$own_last_responses_2 == 
+                                         "right", 1, -1)) # 1 is right,-1 is left
+  d <- d %>% mutate(own_last_responses_3 = ifelse(d$own_last_responses_3 == 
+                                         "right", 1, -1)) # 1 is right,-1 is left
+  d <- d %>% mutate(own_last_responses_4 = ifelse(d$own_last_responses_4 == 
+                                         "right", 1, -1)) # 1 is right,-1 is left
+  d <- d %>% mutate(own_last_responses_5 = ifelse(d$own_last_responses_5 == 
+                                         "right", 1, -1)) # 1 is right,-1 is left
+  
+  
+  d <- d %>% mutate(other_last_responses = ifelse(d$other_last_responses == 
+                                         "right", 1, -1)) # 1 is right,-1 is left
+  d <- d %>% mutate(other_last_responses_2 = ifelse(d$other_last_responses_2 == 
+                                         "right", 1, -1)) # 1 is right,-1 is left
+  d <- d %>% mutate(other_last_responses_3 = ifelse(d$other_last_responses_3 == 
+                                         "right", 1, -1)) # 1 is right,-1 is left
+  d <- d %>% mutate(other_last_responses_4 = ifelse(d$other_last_responses_4 == 
+                                         "right", 1, -1)) # 1 is right,-1 is left
+  d <- d %>% mutate(other_last_responses_5 = ifelse(d$other_last_responses_5 == 
+                                         "right", 1, -1)) # 1 is right,-1 is left
+  #### create variables ####
+  
+  # create a "stimulus_n"
+  d <- d %>% mutate(stimulus_n = ifelse(d$direction == 
+                                         "right", 1, -1)) # 1 is right,-1 is left
+  
+  # correct
+  d <- d %>% mutate(correct_n = ifelse(direction == response, 1, -1)) # 1 is correct
+
+  # previous correct
+  # d <- d %>% mutate(correct_n_1 = lag(correct_n)) # see below
+  
+  
+  # create "response_n" bounded between 0 and 1 for the GLM fitting
+  d <- d %>% mutate(response_n = ifelse(response == "right", 1, 0))
+  
+  # create "response_n_effect_code"
+  d <- d %>% mutate(response_n_effect_code = ifelse(response == "right", 1, -1)) # 1 is right, -1 is left
+  
+  # create variables that depend on the chronological sequence
+  # best is to do it by block, because block 2 trial 1 is not immediately
+  # followed by block 1 trial 100 (there were short breaks in between)
+  
+  d <- d %>%
+    group_by(block) %>%  # group by block
+    mutate(individual_id_n_1 = lag(individual_id), # previous id
+           individual_id_n_2 = lag(individual_id, n = 2), # id two trials ago
+           response_n_1 = lag(response_n_effect_code), #  previous response
+           response_n_2 = lag(response_n_effect_code, n = 2),
+           stimulus_n_1 = lag(stimulus_n), # stimulus at delay of 1
+           stimulus_n_2 = lag(stimulus_n, n = 2), # stimulus at delay of 2
+           correct_n_1 = lag(correct_n),
+           correct_n_2 = lag(correct_n_1, n = 2)
+           )
+
+  # previous actor identity
+  # boolean comparison between the current id and the id immediately before
+  # if the same, it is self, and code as 1
+  # if not, it is other, and code as -1
+  d <- d %>% mutate(previous_actor = ifelse(individual_id == individual_id_n_1, 1, -1))
+  
+  # actor identity two trials ago
+  # same rationale as previous_actor
+  d <- d %>% mutate(previous_actor_2 = ifelse(individual_id == individual_id_n_2, 1, -1))
+      
+  # create "repeat_prev_resp" to indicate if the current response
+  # is a repeat of the previous response
+  # 1 means yes/true; -1 means no true
+  d$repeat_prev_resp<- d$response_n_effect_code == d$response_n_1
+  # d <- d %>% mutate(repeat_prev_resp = ifelse(repeat_prev_resp, 1, -1)) # 1 is yes/true
+  
+  # create "last done by self"
+  # checked if the previous id is the same as the current id
+  # this is for tallying up the count for visualizing repeat prob
+  d$last_done_by_self <- ifelse(d$individual_id ==
+                                  lag(d$individual_id), TRUE, FALSE)
+
+  # create "last not done by self"
+  # check if the previous id is NOT the same as the current id
+  d$last_not_done_by_self <- ifelse(d$individual_id !=
+                                      lag(d$individual_id), TRUE, FALSE)
+  
+  # the following are old code; though names are different the information
+  # they code for are the same as "previous actor"
+  # keep these bc we need these names for visualizations in script #2 "EDA"
+  
+  # create identity of current trial actor (self or other is acting)
+  # check chamber_1 is == to chamber_1 (i.e., own self), if yes, set to 1,
+  # otherwise, set to -1 (other)
+  # keep in mind, chamber_1 is always reference. this is arbitrary.
+
+  d <- d %>% mutate(participant_n =
+                      ifelse(chamber == "chamber_1", 1, -1)) # 1 self/-1 other
+
+  # create "participant_n_1" to indicate previous actor identity
+  # check if the immediate last trial was done by the same person,
+  # if yes it's self, if not (there is a switch of actor identity),
+  # it's "not self"
+
+  d <- d %>% mutate(participant_n_1 =
+                      ifelse(chamber == lag(chamber), 1, -1)) # 1 is self
+
+  # save d into a csv while over-writing the original csv
+  file_base = paste(tools::file_path_sans_ext(basename(filename)),
+                    "_preprocessed_result.csv")
+  out_file_name = paste(outdir, file_base)
+  write_csv(d, file = out_file_name)
+
+}
+
+list_all_files <-list.files("./raw_data/main_experiment_raw/",
+                            full.names = TRUE)
+for (i in 1:length(list_all_files))
+  preprocess_data(file = list_all_files[i],
+                  "./raw_data/main_experiment/")
+```
